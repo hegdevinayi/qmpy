@@ -1,78 +1,81 @@
 import os
-from django.db import models
 import logging
+from django.db import models
 
-import qmpy
 import qmpy.materials.element as elt
 
 logger = logging.getLogger(__name__)
+
+
+class PotentialError(Exception):
+    """Base class to handle errors related to pseudopotentials."""
+    pass
+
 
 class Potential(models.Model):
     """
     Class for storing a VASP potential.
 
     Relationships:
-        | calculation
-        | element
+        | :class:`qmpy.Element` via element
 
     Attributes:
-        | name
         | date
         | elec_config
         | enmax
         | enmin
         | gw
         | id
+        | name
         | paw
         | potcar
+        | release
         | us
         | xc
-        | release
     """
+    element = models.ForeignKey(elt.Element, related_name='potential_set')
 
-    potcar = models.TextField()
-    element = models.ForeignKey(elt.Element)
-
-    name = models.CharField(max_length=10)
-    xc = models.CharField(max_length=3)
-    gw = models.BooleanField(default=False)
-    paw = models.BooleanField(default=False)
-    us = models.BooleanField(default=False)
-    enmax = models.FloatField()
-    enmin = models.FloatField()
     date = models.CharField(max_length=20)
     elec_config = models.TextField(blank=True, null=True)
+    enmax = models.FloatField()
+    enmin = models.FloatField()
+    gw = models.BooleanField(default=False)
+    name = models.CharField(max_length=10)
+    paw = models.BooleanField(default=False)
+    potcar = models.TextField()
     release = models.CharField(max_length=10)
+    us = models.BooleanField(default=False)
+    xc = models.CharField(max_length=3)
 
     class Meta:
         app_label = 'qmpy'
         db_table = 'vasp_potentials'
 
     def __str__(self):
-        ident = '%s %s' % (self.name, self.xc)
+        # E.g. Li_sv PAW PBE GW (v: r5_4_0)
+        ident = [self.name]
         if self.paw:
-            ident += ' PAW'
-        if self.us:
-            ident += ' US'
+            ident.append('PAW')
+        elif self.us:
+            ident.append('US')
+        ident.append(self.xc)
         if self.gw:
-            ident += ' GW'
-        ident += ' %s' %(self.release)
-        return ident
+            ident.append('GW')
+        ident.append('(v: {})'.format(self.release))
+        return ' '.join(ident)
 
     @classmethod
     def read_potcar(cls, potfile):
-        '''
-        Import pseudopotential(s) from VASP POTCAR.
-
-        Make sure to save each of them after importing
-        in order to store in them in the OQMD
+        """
+        Import pseudopotential(s) from VASP POTCAR and save them to database.
 
         Arguments:
-            potfile - string, Path to POTCAR file
+            potfile:
+                String with the path to the POTCAR file.
 
         Output:
-            List of Potential objects
-        '''
+            List of :class:`qmpy.Potential` objects.
+        """
 
         # Read entire POTCAR file
         with open(potfile, 'r') as fr:
@@ -81,11 +84,11 @@ class Potential(models.Model):
         # If the file VERSION exists in the parent directory, read in the
         # release info (manually added)
         potfile_dir = os.path.dirname(os.path.abspath(potfile))
-        VERSION_file = os.path.join(potfile_dir, '..', 'VERSION')
-        VERSION = 'unknown'
-        if os.path.exists(VERSION_file):
-            with open(VERSION_file, 'r') as fr:
-                VERSION = fr.readline().strip()
+        version_file = os.path.join(potfile_dir, '..', 'VERSION')
+        version = 'unknown'
+        if os.path.exists(version_file):
+            with open(version_file, 'r') as fr:
+                version = fr.readline().strip()
 
         # Split into the component POTCARs
         pots = pots.strip().split('End of Dataset')
@@ -98,10 +101,9 @@ class Potential(models.Model):
 
             # Get key information from POTCAR
             potcar = {}
-            potcar['release'] = VERSION
+            potcar['release'] = version
             for line in pot.split('\n'):
 
-                # Get element name
                 if 'TITEL' in line:
                     try:
                         potcar['name'] = line.split()[3]
@@ -117,14 +119,17 @@ class Potential(models.Model):
                     # Al, Cu, etc. regular ones
                     else:
                         telt = potcar['name']
+
                     date = line.split()[-1]
                     if potcar['name'] == 'H_AE':
                         date = 'None'
-                    try:
-                        potcar['element'] = elt.Element.objects.get(symbol=telt)
-                    except:
-                        print "Unknown element in potcar", telt
-                        raise
+                    potcar['date'] = date
+
+                    if not elt.Element.objects.filter(symbol=telt).exists():
+                        err_msg = "Unknown element in potential: {}".format(telt)
+                        raise PotentialError(err_msg)
+                    potcar['element'] = elt.Element.objects.get(symbol=telt)
+
                     if 'GW' in line:
                         potcar['gw'] = True
                     if 'PAW' in line:
@@ -148,36 +153,42 @@ class Potential(models.Model):
                         potcar['xc'] = 'LDA'
                     elif key == 'PE':
                         potcar['xc'] = 'PBE'
+
             potobj, created = cls.objects.get_or_create(**potcar)
             if created:
                 potobj.potcar = pot
             potobjs.append(potobj)
         return potobjs
 
+
 class Hubbard(models.Model):
     """
     Base class for a hubbard correction parameterization.
 
+    Relationships:
+        | :class:`qmpy.Element` via element, ligand
+
+
     Attributes:
-        | calculation
         | convention
-        | correction
-        | element
+        | element_id
         | id
         | l
-        | ligand
+        | ligand_id
         | ox
         | u
 
     """
-    element = models.ForeignKey(elt.Element, related_name='hubbards')
-    convention = models.CharField(max_length=20)
-    ox = models.FloatField(default=None, null=True)
-    ligand = models.ForeignKey(elt.Element, related_name='+',
-            null=True, blank=True)
+    element = models.ForeignKey(elt.Element, related_name='hubbards_set')
+    ligand = models.ForeignKey(elt.Element, related_name='+', null=True,
+                               blank=True)
 
-    u = models.FloatField(default=0)
+    convention = models.CharField(max_length=20)
+    element_id = models.CharField(max_length=20)
+    ligand_id = models.CharField(max_length=20)
     l = models.IntegerField(default=-1)
+    ox = models.FloatField(default=None, null=True)
+    u = models.FloatField(default=0)
 
     class Meta:
         app_label = 'qmpy'
@@ -201,24 +212,28 @@ class Hubbard(models.Model):
         return True
 
     def __str__(self):
-        retval = self.element_id
+        retval = [self.element_id]
         if self.ox:
-            retval += '+%d' % (self.ox)
+            retval.append('+{:d}'.format(self.ox))
         if self.ligand:
-            retval += '-'+self.ligand_id
-        retval += ', U=%0.2f, L=%d' % (self.u, self.l)
-        return retval
+            retval.append('-{}'.format(self.ligand_id))
+        retval.append(' (U={:0.2f}, L={:d})'.format(self.u, self.l))
+        return ''.join(retval)
 
     @property
     def key(self):
-        return '%s_%s' % (self.element_id, self.u)
+        return '{}_{:0.2f}'.format(self.element_id, self.u)
 
     @classmethod
-    def get(cls, elt, ox=None, u=0, l=-1, lig=None):
+    def get(cls, element_id, ligand_id=None, ox=None, u=0, l=-1):
+        element = elt.Element.objects.get(symbol=element_id)
+        ligand = None
+        if ligand_id:
+            ligand = elt.Element.objects.get(symbol=ligand_id)
         hub, new = Hubbard.objects.get_or_create(
-                element_id=elt,
-                ligand=lig, ox=ox,
-                l=l, u=u)
+            element_id=element_id, element=element,
+            ligand_id=ligand_id, ligand=ligand,
+            ox=ox, u=u, l=l)
         if new:
             hub.save()
         return hub
