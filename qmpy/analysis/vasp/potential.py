@@ -2,7 +2,6 @@ import os
 import logging
 
 from django.db import models
-from django.apps.registry import Apps
 
 import qmpy.materials.element as elt
 import qmpy.utils as utils
@@ -52,7 +51,6 @@ class Potential(models.Model):
 
     class Meta:
         app_label = 'qmpy'
-        apps = Apps(['qmpy'])
         db_table = 'vasp_potentials'
 
     def __str__(self):
@@ -194,7 +192,6 @@ class Hubbard(models.Model):
 
     class Meta:
         app_label = 'qmpy'
-        apps = Apps(['qmpy'])
         db_table = 'hubbards'
 
     def __nonzero__(self):
