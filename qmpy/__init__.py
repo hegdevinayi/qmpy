@@ -51,9 +51,6 @@ short_formatter = logging.Formatter(FORMAT_SHORT)
 console = logging.StreamHandler()
 console.setFormatter(short_formatter)
 
-# uncomment to set debugging output for all normal loggers
-#console.setLevel(logging.DEBUG)
-
 logfile = os.path.join(LOG_PATH, 'qmpy.log')
 general = logging.handlers.WatchedFileHandler(logfile)
 general.setFormatter(formatter)
@@ -152,6 +149,7 @@ def read_spacegroups(numbers=None, overwrite_existing=True):
                         schoenflies=sgd['schoenflies'],
                         lattice_system=sgd['system'])
         sg.save()
+
         cvs = []
         for cv in sgd['centering_vectors']:
             cvs.append(Translation.get(cv))
@@ -186,7 +184,9 @@ def read_elements():
     if not os.path.exists(elem_datafile):
         sys.stdout.write('Elemental properties data not found.\n')
         return
-    elements = open(elem_datafile).read()
+
+    with open(elem_datafile, 'r') as fr:
+        elements = fr.read()
     Element.objects.all().delete()
     elts = []
     for elt, data in yaml.load(elements).items():
@@ -206,7 +206,8 @@ def read_hubbards():
     if not os.path.exists(hubs_file):
         sys.stdout.write('Hubbard data file not found.\n')
         return
-    hubs = open(hubs_file).read()
+    with open(hubs_file, 'r') as fr:
+        hubs = fr.read()
 
     for group, hubbard in yaml.load(hubs).items():
         for ident, data in hubbard.items():
@@ -240,7 +241,7 @@ def read_potentials():
                     for pot in pots:
                         pot.save()
                 except Exception:
-                    print 'Couldn\'t load:', path
+                    print('Failed to load potential "{}"'.format(path))
 
 
 def sync_resources():
@@ -264,7 +265,7 @@ def sync_resources():
         user.save()
 
         for host, adata in data.items():
-            print host, adata
+            print(host, adata)
             host = Host.get(host)
             host.save()
             acc = Account.get(user, host)
