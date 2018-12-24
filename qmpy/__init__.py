@@ -201,10 +201,10 @@ def read_hubbards():
     read Hubbard U values to be used for the suitable elements from the file
     'INSTALL_PATH/configuration/vasp_settings/hubbards.yml'
     """
-    hubs_file = os.path.join(INSTALL_PATH, 'configuration', 'vasp_settings', 
+    hubs_file = os.path.join(INSTALL_PATH, 'configuration', 'vasp_settings',
                              'hubbards.yml')
     if not os.path.exists(hubs_file):
-        sys.stdout.write('Hubbard data file not found.\n')
+        print('Hubbard data file not found.')
         return
     with open(hubs_file, 'r') as fr:
         hubs = fr.read()
@@ -212,9 +212,7 @@ def read_hubbards():
     for group, hubbard in yaml.load(hubs).items():
         for ident, data in hubbard.items():
             elt, ligand, ox = ident.split('_')
-            hub = Hubbard(
-                    l=data['L'],
-                    u=data['U'])
+            hub = Hubbard(l=data['L'], u=data['U'])
             if ox != '*':
                 hub.ox = ox
             hub.ligand_id = ligand
