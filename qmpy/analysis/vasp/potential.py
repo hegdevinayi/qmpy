@@ -18,7 +18,7 @@ class Potential(models.Model):
     Attributes:
         | name
         | date
-        | electrons: Electrons in potential.
+        | elec_config
         | enmax
         | enmin
         | gw
@@ -41,7 +41,7 @@ class Potential(models.Model):
     enmax = models.FloatField()
     enmin = models.FloatField()
     date = models.CharField(max_length=20)
-    electrons = models.TextField(blank=True, null=True)
+    elec_config = models.TextField(blank=True, null=True)
     release = models.CharField(max_length=10)
 
     class Meta:
@@ -75,7 +75,8 @@ class Potential(models.Model):
         '''
 
         # Read entire POTCAR file
-        pots = open(potfile).read()
+        with open(potfile, 'r') as fr:
+            pots = fr.read()
 
         # If the file VERSION exists in the parent directory, read in the
         # release info (manually added)
@@ -102,9 +103,23 @@ class Potential(models.Model):
 
                 # Get element name
                 if 'TITEL' in line:
-                    potcar['name'] = line.split()[3]
-                    telt = potcar['name'].split('_')[0]
-                    date = potcar['name'].split('_')[-1]
+                    try:
+                        potcar['name'] = line.split()[3]
+                    # except for the "H_AE" all-electron? potential
+                    except IndexError:
+                        potcar['name'] = 'H_AE'
+                    # Li_sv, As_sv_GW, Dy_3, etc.
+                    if '_' in potcar['name']:
+                        telt = potcar['name'].split('_')[0]
+                    # H.25, H1.66, etc.
+                    elif '.' in potcar['name']:
+                        telt = ''.join([e for e in potcar['name'].split('.')[0] if not e.isdigit()])
+                    # Al, Cu, etc. regular ones
+                    else:
+                        telt = potcar['name']
+                    date = line.split()[-1]
+                    if potcar['name'] == 'H_AE':
+                        date = 'None'
                     try:
                         potcar['element'] = elt.Element.objects.get(symbol=telt)
                     except:
@@ -123,7 +138,7 @@ class Potential(models.Model):
                     potcar['enmin'] = float(data[5])
 
                 if 'VRHFIN' in line:
-                    potcar['electrons'] = line.split(':')[1]
+                    potcar['elec_config'] = line.split(':')[-1].strip()
 
                 if 'LEXCH' in line:
                     key = line.split()[-1]
