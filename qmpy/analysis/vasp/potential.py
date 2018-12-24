@@ -1,8 +1,11 @@
 import os
 import logging
+
 from django.db import models
+from django.apps.registry import Apps
 
 import qmpy.materials.element as elt
+import qmpy.utils as utils
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,7 @@ class Potential(models.Model):
 
     class Meta:
         app_label = 'qmpy'
+        apps = Apps(['qmpy'])
         db_table = 'vasp_potentials'
 
     def __str__(self):
@@ -184,14 +188,13 @@ class Hubbard(models.Model):
                                blank=True)
 
     convention = models.CharField(max_length=20)
-    element_id = models.CharField(max_length=20)
-    ligand_id = models.CharField(max_length=20)
     l = models.IntegerField(default=-1)
     ox = models.FloatField(default=None, null=True)
     u = models.FloatField(default=0)
 
     class Meta:
         app_label = 'qmpy'
+        apps = Apps(['qmpy'])
         db_table = 'hubbards'
 
     def __nonzero__(self):
@@ -213,8 +216,11 @@ class Hubbard(models.Model):
 
     def __str__(self):
         retval = [self.element_id]
-        if self.ox:
-            retval.append('+{:d}'.format(self.ox))
+        if self.ox is not None:
+            if utils.is_integer(self.ox):
+                retval.append('{}+'.format(int(self.ox)))
+            else:
+                retval.append('{:.1f}+'.format(self.ox))
         if self.ligand:
             retval.append('-{}'.format(self.ligand_id))
         retval.append(' (U={:0.2f}, L={:d})'.format(self.u, self.l))
@@ -226,13 +232,9 @@ class Hubbard(models.Model):
 
     @classmethod
     def get(cls, element_id, ligand_id=None, ox=None, u=0, l=-1):
-        element = elt.Element.objects.get(symbol=element_id)
-        ligand = None
-        if ligand_id:
-            ligand = elt.Element.objects.get(symbol=ligand_id)
         hub, new = Hubbard.objects.get_or_create(
-            element_id=element_id, element=element,
-            ligand_id=ligand_id, ligand=ligand,
+            element_id=element_id,
+            ligand_id=ligand_id,
             ox=ox, u=u, l=l)
         if new:
             hub.save()
