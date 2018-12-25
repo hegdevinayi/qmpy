@@ -181,7 +181,7 @@ class Hubbard(models.Model):
         | u
 
     """
-    element = models.ForeignKey(elt.Element, related_name='hubbards_set')
+    element = models.ForeignKey(elt.Element, related_name='hubbard_set')
     ligand = models.ForeignKey(elt.Element, related_name='+', null=True,
                                blank=True)
 
