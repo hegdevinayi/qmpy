@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import os
 import logging
 
@@ -10,7 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 class PotentialError(Exception):
-    """Base class to handle errors related to pseudopotentials."""
+    """Base class to handle errors related to VASP potentials."""
+    pass
+
+
+class HubbardError(Exception):
+    """Base class to handle errors related to Hubbard parameters."""
     pass
 
 
@@ -22,12 +29,12 @@ class Potential(models.Model):
         | :class:`qmpy.Element` via element
 
     Attributes:
+        | id
         | date
         | elec_config
         | enmax
         | enmin
         | gw
-        | id
         | name
         | paw
         | potcar
@@ -63,19 +70,22 @@ class Potential(models.Model):
         ident.append(self.xc)
         if self.gw:
             ident.append('GW')
-        ident.append('(v: {})'.format(self.release))
+        if self.release != 'unknown':
+            ident.append('{}'.format(self.release))
         return ' '.join(ident)
 
     @classmethod
-    def read_potcar(cls, potfile):
+    def read_potcar(cls, potfile='POTCAR'):
         """
         Import pseudopotential(s) from VASP POTCAR and save them to database.
 
-        Arguments:
+        Args:
             potfile:
                 String with the path to the POTCAR file.
 
-        Output:
+                Defaults to file "POTCAR" in the current working directory.
+
+        Returns:
             List of :class:`qmpy.Potential` objects.
         """
 
@@ -84,7 +94,7 @@ class Potential(models.Model):
             pots = fr.read()
 
         # If the file VERSION exists in the parent directory, read in the
-        # release info (manually added)
+        # release info (note: this file is usually manually added)
         potfile_dir = os.path.dirname(os.path.abspath(potfile))
         version_file = os.path.join(potfile_dir, '..', 'VERSION')
         version = 'unknown'
@@ -117,7 +127,8 @@ class Potential(models.Model):
                         telt = potcar['name'].split('_')[0]
                     # H.25, H1.66, etc.
                     elif '.' in potcar['name']:
-                        telt = ''.join([e for e in potcar['name'].split('.')[0] if not e.isdigit()])
+                        telt = ''.join([e for e in potcar['name'].split('.')[0]
+                                        if not e.isdigit()])
                     # Al, Cu, etc. regular ones
                     else:
                         telt = potcar['name']
@@ -132,12 +143,9 @@ class Potential(models.Model):
                         raise PotentialError(err_msg)
                     potcar['element'] = elt.Element.objects.get(symbol=telt)
 
-                    if 'GW' in line:
-                        potcar['gw'] = True
-                    if 'PAW' in line:
-                        potcar['paw'] = True
-                    if 'US' in line:
-                        potcar['us'] = True
+                    potcar['gw'] = 'GW' in line
+                    potcar['paw'] = 'PAW' in line
+                    potcar['us'] = 'US' in line
 
                 if 'ENMAX' in line:
                     data = line.split()
@@ -172,13 +180,13 @@ class Hubbard(models.Model):
 
 
     Attributes:
-        | convention
-        | element_id
         | id
-        | l
-        | ligand_id
-        | ox
-        | u
+        | element_id (from relationship)
+        | ligand_id (from relationship)
+        | convention
+        | hubbard_l
+        | hubbard_u
+        | oxidation_state
 
     """
     element = models.ForeignKey(elt.Element, related_name='hubbard_set')
@@ -186,16 +194,16 @@ class Hubbard(models.Model):
                                blank=True)
 
     convention = models.CharField(max_length=20)
-    l = models.IntegerField(default=-1)
-    ox = models.FloatField(default=None, null=True)
-    u = models.FloatField(default=0)
+    hubbard_l = models.IntegerField(default=-1)
+    hubbard_u = models.FloatField(default=0)
+    oxidation_state = models.FloatField(default=None, null=True)
 
     class Meta:
         app_label = 'qmpy'
         db_table = 'hubbards'
 
     def __nonzero__(self):
-        if self.u > 0 and self.l != -1:
+        if self.hubbard_u > 0 and self.hubbard_l != -1:
             return True
         else:
             return False
@@ -205,34 +213,88 @@ class Hubbard(models.Model):
             return False
         elif self.ligand != other.ligand:
             return False
-        elif self.u != other.u:
+        elif self.hubbard_l != other.hubbard_l:
             return False
-        elif self.l != other.l:
+        elif self.hubbard_u != other.hubbard_u:
             return False
         return True
 
     def __str__(self):
-        retval = [self.element_id]
-        if self.ox is not None:
-            if utils.is_integer(self.ox):
-                retval.append('{}+'.format(int(self.ox)))
+        ident = [self.element_id]
+        if self.oxidation_state is not None:
+            if utils.is_integer(self.oxidation_state):
+                ident.append('{}+'.format(int(self.oxidation_state)))
             else:
-                retval.append('{:.1f}+'.format(self.ox))
+                ident.append('{:.1f}+'.format(self.oxidation_state))
         if self.ligand:
-            retval.append('-{}'.format(self.ligand_id))
-        retval.append(' (U={:0.2f}, L={:d})'.format(self.u, self.l))
-        return ''.join(retval)
+            ident.append('-{}'.format(self.ligand_id))
+        ident.append(' (U={:0.2f}, L={:d})'.format(self.hubbard_u,
+                                                   self.hubbard_l))
+        return ''.join(ident)
 
     @property
     def key(self):
-        return '{}_{:0.2f}'.format(self.element_id, self.u)
+        """String with key for the module-level `qmpy.HUBBARDS` dictionary."""
+        return '{}_{:0.2f}'.format(self.element_id, self.hubbard_u)
 
     @classmethod
-    def get(cls, element_id, ligand_id=None, ox=None, u=0, l=-1):
-        hub, new = Hubbard.objects.get_or_create(
+    def get(cls,
+            element_id,
+            ligand_id=None,
+            convention=None,
+            oxidation_state=None,
+            hubbard_u=0,
+            hubbard_l=-1):
+        """Create a new Hubbard object to store parameters for an element,
+        or get an already-created object corresponding to the input
+        parameters if it exists.
+
+        Args:
+            element_id:
+                String with the symbol of the element. (Required.)
+
+            convention:
+                String with the name of the parameterization convention.
+                E.g. "wang", "aykol", etc.
+
+                Defaults to None.
+
+            ligand_id:
+                String with the symbol of the ligand element.
+
+                Defaults to None.
+
+            oxidation_state:
+                Float with the oxidation state of the element.
+
+                Defaults to None.
+
+            hubbard_u:
+                Float with the Hubbard-U parameter.
+
+                Defaults to U = 0.
+
+            hubbard_l:
+                Integer with the l-quantum number for which the Hubbard-U
+                parameter is provided.
+
+                Use l = -1 for no onsite interactions as per VASP INCAR, and
+                l = {0, 1, 2, 3} for {s, p, d, f}-orbitals.
+
+                Defaults to (LDAUL =) -1.
+
+        Returns:
+            `qmpy.Hubbard` object with the Hubbard parameterization.
+
+        """
+        hub, new = cls.objects.get_or_create(
             element_id=element_id,
             ligand_id=ligand_id,
-            ox=ox, u=u, l=l)
+            convention=convention,
+            oxidation_state=oxidation_state,
+            hubbard_l=hubbard_l,
+            hubbard_u=hubbard_u
+        )
         if new:
             hub.save()
         return hub
