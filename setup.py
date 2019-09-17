@@ -1,5 +1,6 @@
 from setuptools import setup, find_packages
 
+
 setup(
     name='qmpy',
     version='1.2.0',
