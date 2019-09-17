@@ -5,8 +5,6 @@ python:
 branches:
   only:
     - master
-virtualenv:
-  system_site_packages: true
 services:
   - mysql
 before_install:
